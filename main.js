@@ -1,28 +1,78 @@
-async function translate(text, from, to, options) {
-    const { config, utils } = options;
-    const { tauriFetch: fetch } = utils;
-    let { requestPath: url } = config;
-    let plain_text = text.replaceAll("/", "@@");
-    let encode_text = encodeURIComponent(plain_text);
-    if (url === undefined || url.length === 0) {
-        url = "lingva.pot-app.com"
+// 提取URL处理逻辑
+function processUrl(url) {
+    // 设置默认URL
+    const DEFAULT_URL = "http://localhost:3000";
+    
+    // 如果URL为空则返回默认值
+    if (!url?.trim()) {
+        return DEFAULT_URL;
     }
-    if (!url.startsWith("http")) {
-        url = `https://${url}`;
-    }
-    const res = await fetch(`${url}/api/v1/${from}/${to}/${encode_text}`, {
-        method: 'GET',
-    });
+    
+    // 去除URL末尾的斜杠并确保有http前缀
+    return (url.endsWith("/") ? url.slice(0, -1) : url)
+        .startsWith("http") ? url : `http://${url}`;
+}
 
+async function translate(text, from, to, options) {
+    const { config, utils, detect } = options;
+    const { tauriFetch: fetch } = utils;
+    let { apiUrl: url, token } = config;
+    
+    url = processUrl(url);
+    
+    // 先进行健康检查
+    const healthCheck = await checkHealth(options);
+    if (!healthCheck) {
+        throw '翻译服务不可用，请检查服务状态';
+    }
+    
+    const headers = {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': token })
+    };
+    
+    // 判断源语言类型，如果是自动检测则调用detect函数
+    if (from === 'auto') {
+        from = detect;  
+    }
+    const body = { from, to, text };
+    
+    const res = await fetch(`${url}/translate`, {
+        method: 'POST',
+        headers,
+        body: { type: 'Json', payload: body }
+    });
+    
     if (res.ok) {
-        let result = res.data;
-        const { translation } = result;
-        if (translation) {
-            return translation.replaceAll("@@", "/");;
-        } else {
-            throw JSON.stringify(result.trim());
-        }
+        const result = res.data;
+        return result?.result || Promise.reject('服务器返回数据格式错误');
     } else {
-        throw `Http Request Error\nHttp Status: ${res.status}\n${JSON.stringify(res.data)}`;
+        throw `请求失败\nHTTP状态码: ${res.status}\n${JSON.stringify(res.data)}`;
+    }
+}
+
+
+// 健康检查
+async function checkHealth(options) {
+    const { config, utils, detect } = options;
+    const { tauriFetch: fetch } = utils;
+    let { apiUrl: url, token } = config;
+    
+    url = processUrl(url);
+
+    const headers = {
+        ...(token && { 'Authorization': token })
+    };
+    
+    const res = await fetch(`${url}/health`, {
+        method: 'GET',
+        headers
+    });
+    
+    if (res.ok) {
+        return res.data.status === 'ok';
+    } else {
+        throw `${res.status}\n${JSON.stringify(res)}`;
+        // throw `健康检查失败\nHTTP状态码: ${res.status}\n${JSON.stringify(res.data)}`;
     }
 }
