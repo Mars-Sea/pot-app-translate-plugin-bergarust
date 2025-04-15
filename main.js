@@ -28,7 +28,7 @@ async function translate(text, from, to, options) {
     
     const headers = {
         'Content-Type': 'application/json',
-        ...(token && { 'Authorization': token })
+        ...(token && { 'Authorization': `Bearer ${token}` })
     };
     
     // 判断源语言类型，如果是自动检测则调用detect函数
@@ -45,9 +45,9 @@ async function translate(text, from, to, options) {
     
     if (res.ok) {
         const result = res.data;
-        return result?.result || Promise.reject('服务器返回数据格式错误');
+        return result?.text || Promise.reject('服务器返回数据格式错误');
     } else {
-        throw `请求失败\nHTTP状态码: ${res.status}\n${JSON.stringify(res.data)}`;
+        throw `请求失败\nHTTP状态码: ${res.status}\n${JSON.stringify(res.text)}`;
     }
 }
 
@@ -61,7 +61,8 @@ async function checkHealth(options) {
     url = processUrl(url);
 
     const headers = {
-        ...(token && { 'Authorization': token })
+        // 加上 Bearer
+        ...(token && { 'Authorization': `Bearer ${token}`})
     };
     
     const res = await fetch(`${url}/health`, {
@@ -72,7 +73,6 @@ async function checkHealth(options) {
     if (res.ok) {
         return res.data.status === 'ok';
     } else {
-        throw `${res.status}\n${JSON.stringify(res)}`;
-        // throw `健康检查失败\nHTTP状态码: ${res.status}\n${JSON.stringify(res.data)}`;
+        throw `健康检查失败\nHTTP状态码: ${res.status}\n${JSON.stringify(res.data)}`;
     }
 }
