@@ -1,82 +1,127 @@
-// 统一处理 API 调用前的准备工作，包括 URL 和认证
-function _prepareApiCall(options) {
+// main.js
+
+/**
+ * --- Helper Functions ---
+ */
+
+// Prepares API request essentials: URL, headers, and the fetch utility.
+function _prepareRequest(options) {
     const { config, utils } = options;
     let { apiUrl, token } = config;
 
-    // 设置默认 URL，并确保格式正确
-    const processUrl = (url) => {
-        const DEFAULT_URL = "http://localhost:3000";
-        let processedUrl = url?.trim() || DEFAULT_URL;
+    // Default to localhost if apiUrl is not provided.
+    const DEFAULT_URL = "http://localhost:3000";
+    let finalUrl = apiUrl?.trim() || DEFAULT_URL;
 
-        if (!/^(https?:\/\/)/.test(processedUrl)) {
-            processedUrl = `http://${processedUrl}`;
-        }
-        return processedUrl.endsWith('/') ? processedUrl.slice(0, -1) : processedUrl;
-    };
+    // Ensure the URL has a protocol.
+    if (!/^(https?:\/\/)/.test(finalUrl)) {
+        finalUrl = `http://${finalUrl}`;
+    }
 
-    const finalUrl = processUrl(apiUrl);
+    // Remove any trailing slash.
+    if (finalUrl.endsWith('/')) {
+        finalUrl = finalUrl.slice(0, -1);
+    }
 
     const headers = {
         'Content-Type': 'application/json',
-        ...(token && { 'Authorization': `Bearer ${token}` })
     };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
 
     return { url: finalUrl, headers, fetch: utils.tauriFetch };
 }
 
-// 抛出标准化的错误信息
-function _throwError(message, response = null) {
-    if (response) {
-        const details = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
-        throw `${message}\nHTTP ${response.status}: ${details}`;
+// Gets detailed error information from a response or error object.
+function _getErrorDetails(error) {
+    const res = error?.response;
+
+    if (res) {
+        if (res.status === 401 || res.status === 403) return 'API密钥无效或缺失。';
+        const data = res.data;
+        if (data && typeof data === 'object') return data.message || data.error || JSON.stringify(data);
+        if (typeof data === 'string' && data.length > 0) return data;
+        return `服务返回 HTTP ${res.status} 错误。`;
     }
-    throw message;
+    
+    if (error instanceof Error) {
+        const msg = error.message;
+        if (msg.includes('Failed to fetch') || msg.includes('error sending request')) {
+            return '无法连接到翻译服务，请检查API地址和网络连接。';
+        }
+        return error.message;
+    }
+
+    if (typeof error === 'string') return error;
+    
+    return '发生未知错误。';
 }
 
-// 健康检查
+
+/**
+ * --- Plugin Functions ---
+ */
+
+// Checks the health of the BergaRust translation service.
 async function checkHealth(options) {
+    const { url, headers, fetch } = _prepareRequest(options);
+
     try {
-        const { url, headers, fetch } = _prepareApiCall(options);
         const res = await fetch(`${url}/health`, { method: 'GET', headers });
 
         if (res.ok && res.data?.status === 'ok') {
             return true;
         }
-        // 如果服务返回了非 200 状态码，或者状态不是 'ok'
-        _throwError('健康检查失败', res);
+        
+        // Throw with response to be caught and formatted
+        throw { response: res };
+
     } catch (error) {
-        // 处理网络层面的错误或其他意外
-        throw error.message || '翻译服务不可用，请检查服务状态';
+        const details = _getErrorDetails(error);
+        throw new Error(`健康检查失败.\n详情: ${details}`);
     }
-    return false; // 明确返回 false
 }
 
-// 翻译函数
+// Translates text using the BergaRust service.
 async function translate(text, from, to, options) {
-    // 前置健康检查
-    const isHealthy = await checkHealth(options);
-    if (!isHealthy) {
-        throw '翻译服务不可用，请检查服务状态';
+    if (!text || typeof text !== 'string') {
+        throw new Error('翻译失败：输入文本不能为空。');
+    }
+    if (!from || !to) {
+        throw new Error('翻译失败：源语言和目标语言必须指定。');
     }
 
-    const { url, headers, fetch } = _prepareApiCall(options);
+    const { url, headers, fetch } = _prepareRequest(options);
     const { detect } = options;
 
-    // 如果源语言是自动检测，则使用检测结果
     const sourceLang = from === 'auto' ? detect : from;
-
-    const body = { from: sourceLang, to, text };
-
-    const res = await fetch(`${url}/translate`, {
-        method: 'POST',
-        headers,
-        body: { type: 'Json', payload: body }
-    });
-
-    if (res.ok && res.data?.text) {
-        return res.data.text;
+    if (!sourceLang) {
+        throw new Error('翻译失败：无法检测到源语言。');
     }
 
-    // 如果响应成功但数据格式不正确，或响应失败
-    _throwError('翻译失败', res);
+    const body = {
+        from: sourceLang,
+        to,
+        text,
+    };
+
+    try {
+        const res = await fetch(`${url}/translate`, {
+            method: 'POST',
+            headers,
+            body: { type: 'Json', payload: body },
+        });
+
+        if (res.ok && res.data?.text) {
+            return res.data.text;
+        }
+        
+        // Throw with response to be caught and formatted
+        throw { response: res };
+
+    } catch (error) {
+        const details = _getErrorDetails(error);
+        throw new Error(`翻译失败.\n详情: ${details}`);
+    }
 }
